@@ -15,7 +15,7 @@ conda activate sciurus
 cd /scratch/an3854/aime_path_patching/new
 
 # Parameters
-MODEL="qwen-base"  # qwen-chat, qwen-instruct, deepseek-distilled, qwen-base, llama-base, llama-instruct, llama-distilled, open-reasoner, llama-rl
+MODEL="llama-distilled"  # qwen-chat, qwen-instruct, deepseek-distilled, qwen-base, llama-base, llama-instruct, llama-distilled, open-reasoner, llama-rl
 DATASET="trivia"      # math, trivia
 NUM_PROBLEMS=1000
 BATCH_SIZE=1000

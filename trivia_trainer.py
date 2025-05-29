@@ -4,13 +4,36 @@ from base_trainer import BaseTrainer
 class TriviaTrainer(BaseTrainer):
     """Trainer specialized for TriviaQA factual recall"""
     
+    def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="trivia"):
+        super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name)
+    
     def extract_answer(self, output):
         """Return the full output - we'll check if correct answer is contained within"""
         return output.strip() if output else ""
     
     def prepare_prompt(self, item):
-        """Prepare prompt for trivia question - just the question"""
-        return item['question']
+        """Prepare prompt for trivia question"""
+        question = item['question']
+        
+        # Use special prompts only for distilled models
+        if "distilled" in self.model_name.lower():
+            if "deepseek" in self.model_name.lower():
+                return (
+                    "Answer this trivia question directly and concisely. "
+                    "Provide the answer clearly in your response.\n\n"
+                    f"Question: {question}\n"
+                    "Answer:"
+                )
+            elif "llama" in self.model_name.lower():
+                return (
+                    "<｜User｜>Answer the following trivia question directly and accurately. "
+                    "Provide a clear, concise answer.\n\n"
+                    f"Question: {question}\n"
+                    "<｜Assistant｜>"
+                )
+        
+        # Default: just return the question for all other models
+        return question
     
     def get_ground_truth(self, item):
         """Get ground truth answer from TriviaQA item"""

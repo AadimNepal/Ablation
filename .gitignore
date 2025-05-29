@@ -23,6 +23,9 @@ ablated_model_qwen7bchat
 ablated_model_llama
 *.err
 *.out
+ablated_model_llama318binstruct/
+ablated_model_llama318bsimplerl/
+ablated_model_qwen257bbase/
 
 
 

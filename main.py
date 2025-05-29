@@ -77,10 +77,24 @@ def main():
     
     if args.dataset == "math":
         dataset = GSM8KLoader()
-        trainer = MathTrainer(model, dataset, args.num_problems, args.batch_size)
+        trainer = MathTrainer(
+            model, 
+            dataset, 
+            args.num_problems, 
+            args.batch_size,
+            model_name=args.model,  # Pass model name
+            dataset_name="math"     # Pass dataset name
+        )
     elif args.dataset == "trivia":
         dataset = TriviaQALoader()
-        trainer = TriviaTrainer(model, dataset, args.num_problems, args.batch_size)
+        trainer = TriviaTrainer(
+            model, 
+            dataset, 
+            args.num_problems, 
+            args.batch_size,
+            model_name=args.model,  # Pass model name
+            dataset_name="trivia"   # Pass dataset name
+        )
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
     
@@ -96,28 +110,9 @@ def main():
     else:
         raise ValueError(f"Unknown ablation type: {args.ablation_type}")
     
-    # Save results with nested structure
-    os.makedirs("results", exist_ok=True)
-    os.makedirs(f"results/{args.model}", exist_ok=True)
-    
-    with open(f"results/{args.model}/{run_name}.json", "w") as f:
-        json.dump({
-            "experiment_info": {
-                "model": args.model,
-                "dataset": args.dataset,
-                "ablation_type": args.ablation_type,
-                "timestamp": datetime.now().strftime('%Y%m%d_%H%M%S')
-            },
-            "parameters": {
-                "start_layer": args.start_layer,
-                "end_layer": args.end_layer,
-                "head_idx": args.head_idx,
-                "layer_idx": args.layer_idx,
-                "num_problems": args.num_problems,
-                "batch_size": args.batch_size
-            },
-            "results": results
-        }, f, indent=2)
+    print(f"\n🎉 Experiment completed!")
+    print(f"📁 Results saved in: results/{args.model}-{args.dataset}/")
+    print(f"📊 Check the detailed JSON files for questions, responses, and correctness")
     
     wandb.finish()
 

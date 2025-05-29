@@ -200,8 +200,7 @@ class Qwen257BInstruct(BaseVllmModel, QwenModelMixin):
     def __init__(self):
         super().__init__(
             model_id="Qwen/Qwen2.5-7B-Instruct",
-            checkpoint_path="./ablated_model_qwen257binstruct",
-            max_tokens=100
+            checkpoint_path="./ablated_model_qwen257binstruct"
         )
         # Override sampling params for instruct model
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=100)
