@@ -4,6 +4,8 @@ import json
 from abc import ABC, abstractmethod
 from tqdm import tqdm
 from datetime import datetime
+import random
+import csv
 
 
 class BaseTrainer(ABC):
@@ -60,20 +62,76 @@ class BaseTrainer(ABC):
     def check_correctness(self, prediction, ground_truth):
         """Check if prediction matches ground truth"""
         pass
-    
+
+    def save_spreadsheet(self, results, layer):
+        """Save results as CSV spreadsheet"""
+        csv_filename = f"layer_{layer}_results.csv"
+        csv_filepath = os.path.join(self.results_dir, csv_filename)
+        
+        with open(csv_filepath, 'w', newline='', encoding='utf-8') as csvfile:
+            fieldnames = [
+                'question', 
+                'model_response', 
+                'extracted_answer', 
+                'correct_answer', 
+                'model_name',
+                'is_correct'
+            ]
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            
+            for result in results:
+                writer.writerow({
+                    'question': result['prompt'],
+                    'model_response': result['model_response'],
+                    'extracted_answer': result['extracted_prediction'],
+                    'correct_answer': result['ground_truth'],
+                    'model_name': self.model_name,
+                    'is_correct': 1 if result['is_correct'] else 0
+                })
+        
+        print(f"Spreadsheet saved to: {csv_filepath}")
+
     def evaluate_batch(self, layer="baseline"):
         """Evaluate model on dataset using batched processing with detailed saving"""
         correct, total = 0, 0
         results = []
         
-        total_problems = min(self.num_problems, len(self.dataset))
+        dataset_size = len(self.dataset)
+        requested_problems = self.num_problems
+        
+        # Handle edge cases
+        if dataset_size == 0:
+            print("Warning: Dataset is empty!")
+            return 0.0
+        
+        if requested_problems <= 0:
+            print("Warning: Requested 0 or negative problems!")
+            return 0.0
+        
+        # Determine how many problems to actually process
+        total_problems = min(requested_problems, dataset_size)
+        
+        # Generate random indices for sampling
+        if total_problems == dataset_size:
+            # Use all samples (either requested all, or requested more than available)
+            print(f"Using all {dataset_size} samples from dataset")
+            indices = list(range(dataset_size))
+            random.shuffle(indices)  # Still randomize the order
+        else:
+            # Sample random subset without replacement
+            print(f"Sampling {total_problems} random problems from {dataset_size} available")
+            indices = random.sample(range(dataset_size), total_problems)
         
         print(f"Evaluating {layer} - Processing {total_problems} problems...")
         
-        # Process in batches
+        # Process in batches using the selected indices
         for batch_idx in tqdm(range(0, total_problems, self.batch_size), desc=f"Layer {layer} evaluation"):
             batch_end_idx = min(batch_idx + self.batch_size, total_problems)
-            batch_items = [self.dataset[idx] for idx in range(batch_idx, batch_end_idx)]
+            
+            # Get items using selected indices (guaranteed to be within bounds)
+            batch_indices = indices[batch_idx:batch_end_idx]
+            batch_items = [self.dataset[idx] for idx in batch_indices]
             
             # Prepare prompts and ground truths
             batch_prompts = [self.prepare_prompt(item) for item in batch_items]
@@ -83,7 +141,7 @@ class BaseTrainer(ABC):
             batch_responses = self.model.generate_batch(batch_prompts)
             
             # Process each response
-            for idx, (item, prompt, response, ground_truth) in enumerate(zip(batch_items, batch_prompts, batch_responses, batch_ground_truths)):
+            for idx, (item, prompt, response, ground_truth, dataset_idx) in enumerate(zip(batch_items, batch_prompts, batch_responses, batch_ground_truths, batch_indices)):
                 prediction = self.extract_answer(response)
                 is_correct = self.check_correctness(prediction, ground_truth)
                 
@@ -94,12 +152,13 @@ class BaseTrainer(ABC):
                 # Store detailed results including the original question/prompt
                 result_entry = {
                     "index": batch_idx + idx,
-                    "prompt": prompt,  # The question/input
+                    "dataset_index": dataset_idx,
+                    "prompt": prompt,
                     "ground_truth": ground_truth,
-                    "model_response": response,  # Full model output
-                    "extracted_prediction": prediction,  # What we extracted as the answer
+                    "model_response": response,
+                    "extracted_prediction": prediction,
                     "is_correct": is_correct,
-                    "dataset_item": item  # Store original dataset item for reference
+                    "dataset_item": item
                 }
                 
                 results.append(result_entry)
@@ -121,7 +180,9 @@ class BaseTrainer(ABC):
                 "layer": layer,
                 "timestamp": self.experiment_timestamp,
                 "total_problems": total_problems,
-                "batch_size": self.batch_size
+                "batch_size": self.batch_size,
+                "random_indices": indices,
+                "dataset_size": dataset_size
             },
             "summary": {
                 "total_examples": total,
@@ -134,6 +195,9 @@ class BaseTrainer(ABC):
         
         with open(layer_filepath, "w") as f:
             json.dump(layer_data, f, indent=2)
+        
+        # Save as spreadsheet
+        self.save_spreadsheet(results, layer)
         
         print(f"Layer {layer} results saved to: {layer_filepath}")
         print(f"Layer {layer} accuracy: {correct/total:.4f} ({correct}/{total})")
@@ -217,145 +281,3 @@ class BaseTrainer(ABC):
         print(f"All detailed results in: {self.results_dir}")
         
         return {"baseline": baseline_accuracy, "results": results_summary}
-    
-    def run_head_ablation(self, layer_idx=0, head_idx=0):
-        """Run head ablation experiment with organized results"""
-        print(f"Starting head ablation experiment for {self.model_name} on {self.dataset_name}")
-        print(f"Ablating head {head_idx} in layer {layer_idx}")
-        
-        # Evaluate baseline
-        baseline_accuracy = self.evaluate_batch("baseline")
-        wandb.log({"baseline_accuracy": baseline_accuracy})
-        
-        # Ablate specific head
-        self.model.zero_ablate_head(layer_idx, head_idx)
-        head_label = f"{layer_idx}_head_{head_idx}"
-        accuracy = self.evaluate_batch(layer=head_label)
-        delta = baseline_accuracy - accuracy
-        
-        wandb.log({
-            "head_accuracy": accuracy,
-            "layer_number": layer_idx,
-            "head_number": head_idx
-        })
-        
-        # Save experiment summary
-        experiment_summary = {
-            "experiment_info": {
-                "model": self.model_name,
-                "dataset": self.dataset_name,
-                "experiment_type": "head_ablation",
-                "timestamp": self.experiment_timestamp,
-                "layer_idx": layer_idx,
-                "head_idx": head_idx
-            },
-            "baseline_accuracy": baseline_accuracy,
-            "head_result": {
-                "layer": layer_idx, 
-                "head": head_idx, 
-                "accuracy": accuracy, 
-                "delta": delta
-            }
-        }
-        
-        summary_filepath = os.path.join(self.results_dir, f"head_ablation_summary_{self.experiment_timestamp}.json")
-        with open(summary_filepath, "w") as f:
-            json.dump(experiment_summary, f, indent=2)
-        
-        print(f"Head ablation completed! Summary: {summary_filepath}")
-        return experiment_summary
-    
-    def run_layer_range_ablation(self, start_layer=0, end_layer=5):
-        """Run layer range ablation experiment with organized results"""
-        print(f"Starting layer range ablation for {self.model_name} on {self.dataset_name}")
-        print(f"Ablating layers {start_layer} to {end_layer-1}")
-        
-        # Evaluate baseline
-        baseline_accuracy = self.evaluate_batch("baseline")
-        wandb.log({"baseline_accuracy": baseline_accuracy})
-        
-        # Ablate layer range
-        self.model.ablate_layers_range(start_layer, end_layer)
-        range_label = f"range_{start_layer}_{end_layer}"
-        accuracy = self.evaluate_batch(layer=range_label)
-        delta = baseline_accuracy - accuracy
-        
-        wandb.log({
-            "range_accuracy": accuracy,
-            "start_layer": start_layer,
-            "end_layer": end_layer
-        })
-        
-        # Save experiment summary
-        experiment_summary = {
-            "experiment_info": {
-                "model": self.model_name,
-                "dataset": self.dataset_name,
-                "experiment_type": "layer_range_ablation",
-                "timestamp": self.experiment_timestamp,
-                "start_layer": start_layer,
-                "end_layer": end_layer
-            },
-            "baseline_accuracy": baseline_accuracy,
-            "range_result": {
-                "start": start_layer, 
-                "end": end_layer, 
-                "accuracy": accuracy, 
-                "delta": delta
-            }
-        }
-        
-        summary_filepath = os.path.join(self.results_dir, f"range_ablation_summary_{self.experiment_timestamp}.json")
-        with open(summary_filepath, "w") as f:
-            json.dump(experiment_summary, f, indent=2)
-        
-        print(f"Range ablation completed! Summary: {summary_filepath}")
-        return experiment_summary
-    
-    def run_permutation(self, start_layer=0, end_layer=5):
-        """Run layer permutation experiment with organized results"""
-        print(f"Starting layer permutation for {self.model_name} on {self.dataset_name}")
-        print(f"Permuting layers {start_layer} to {end_layer-1}")
-        
-        # Evaluate baseline
-        baseline_accuracy = self.evaluate_batch("baseline")
-        wandb.log({"baseline_accuracy": baseline_accuracy})
-        
-        # Apply permutation
-        permutation_result = self.model.permute_layers(start_layer, end_layer)
-        permute_label = f"permute_{start_layer}_{end_layer}"
-        accuracy = self.evaluate_batch(layer=permute_label)
-        delta = baseline_accuracy - accuracy
-        
-        wandb.log({
-            "permute_accuracy": accuracy,
-            "start_layer": start_layer,
-            "end_layer": end_layer
-        })
-        
-        # Save experiment summary
-        experiment_summary = {
-            "experiment_info": {
-                "model": self.model_name,
-                "dataset": self.dataset_name,
-                "experiment_type": "layer_permutation",
-                "timestamp": self.experiment_timestamp,
-                "start_layer": start_layer,
-                "end_layer": end_layer
-            },
-            "baseline_accuracy": baseline_accuracy,
-            "permute_result": {
-                "start": start_layer, 
-                "end": end_layer, 
-                "accuracy": accuracy, 
-                "delta": delta, 
-                "permutation": permutation_result
-            }
-        }
-        
-        summary_filepath = os.path.join(self.results_dir, f"permutation_summary_{self.experiment_timestamp}.json")
-        with open(summary_filepath, "w") as f:
-            json.dump(experiment_summary, f, indent=2)
-        
-        print(f"Permutation completed! Summary: {summary_filepath}")
-        return experiment_summary

@@ -7,22 +7,25 @@
 #SBATCH -o ablation_%j.out
 #SBATCH -e ablation_%j.err
 
+# Load required modules
+module load gcc
+export CC=gcc
+
 # Activate environment
 source /share/apps/NYUAD/miniconda/3-4.11.0/bin/activate
-conda activate sciurus
+conda activate /scratch/ss13750/sciurus
 
 # Change to working directory
-cd /scratch/an3854/aime_path_patching/new
+cd /scratch/ss13750/aadim/Ablation
 
 # Parameters
-MODEL="llama-distilled" # qwen-chat, qwen-instruct, deepseek-distilled, qwen-base, llama-base, llama-instruct, llama-distilled, open-reasoner, llama-rl
+MODEL="open-reasoner" # qwen-chat, qwen-instruct, deepseek-distilled, qwen-base, llama-base, llama-instruct, llama-distilled, open-reasoner, llama-rl
 DATASET="mmlu" # math, trivia, mmlu
 NUM_PROBLEMS=1000
-BATCH_SIZE=1000  # Reduced for MMLU since it has more complex processing
-
+BATCH_SIZE=1000 # Reduced for better memory management
 # MMLU-specific parameters (only used when DATASET="mmlu")
-MMLU_QUESTION_TYPE="factual"  # "", "factual", or "reasoning" 
-MMLU_SUBJECTS=""       # "", or specific subjects like "college_mathematics high_school_physics"
+MMLU_QUESTION_TYPE="reasoning" # "", "factual", or "reasoning"
+MMLU_SUBJECTS="" # "", or specific subjects like "college_mathematics high_school_physics"
 
 echo "Starting ablation study..."
 echo "Model: $MODEL, Dataset: $DATASET, Problems: $NUM_PROBLEMS, Batch Size: $BATCH_SIZE"
@@ -30,8 +33,8 @@ echo "Model: $MODEL, Dataset: $DATASET, Problems: $NUM_PROBLEMS, Batch Size: $BA
 # Build the command based on dataset
 if [ "$DATASET" = "mmlu" ]; then
     echo "MMLU Configuration:"
-    echo "  Question Type Filter: ${MMLU_QUESTION_TYPE:-'all'}"
-    echo "  Subject Filter: ${MMLU_SUBJECTS:-'all subjects'}"
+    echo " Question Type Filter: ${MMLU_QUESTION_TYPE:-'all'}"
+    echo " Subject Filter: ${MMLU_SUBJECTS:-'all subjects'}"
     
     # Build MMLU command
     MMLU_ARGS=""
