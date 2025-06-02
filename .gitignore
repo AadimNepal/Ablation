@@ -26,6 +26,8 @@ ablated_model_llama
 ablated_model_llama318binstruct/
 ablated_model_llama318bsimplerl/
 ablated_model_qwen257bbase/
+ablated_model*
+
 
 
 

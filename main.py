@@ -9,9 +9,10 @@ from vllm_model import (
     Llama318BBase, Llama318BInstruct, DeepSeekR1DistilledLlama, 
     OpenReasonerBase, Llama31SimpleRLZoo
 )
-from gsm8 import GSM8KLoader, TriviaQALoader
+from gsm8 import GSM8KLoader, TriviaQALoader, MMLULoader
 from math_trainer import MathTrainer
 from trivia_trainer import TriviaTrainer
+from mmlu_trainer import MMLUTrainer
 
 
 def get_model(model_name):
@@ -39,7 +40,8 @@ def parse_args():
     parser.add_argument("--model", type=str, default="qwen-chat",
                         choices=["qwen-chat", "qwen-instruct", "deepseek-distilled", "qwen-base", 
                                 "llama-base", "llama-instruct", "llama-distilled", "open-reasoner", "llama-rl"])
-    parser.add_argument("--dataset", type=str, default="math", choices=["math", "trivia"])
+    parser.add_argument("--dataset", type=str, default="math", 
+                        choices=["math", "trivia", "mmlu"])
     parser.add_argument("--num_problems", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=16)
     parser.add_argument("--ablation_type", type=str, default="layer", 
@@ -48,6 +50,14 @@ def parse_args():
     parser.add_argument("--end_layer", type=int, default=5)
     parser.add_argument("--head_idx", type=int, default=0)
     parser.add_argument("--layer_idx", type=int, default=0)
+    
+    # MMLU-specific arguments
+    parser.add_argument("--mmlu_question_type", type=str, default=None,
+                        choices=["factual", "reasoning"],
+                        help="Filter MMLU questions by type: factual (knowledge recall) or reasoning (logical deduction)")
+    parser.add_argument("--mmlu_subjects", type=str, nargs="+", default=None,
+                        help="Filter MMLU to specific subjects (e.g., --mmlu_subjects college_mathematics high_school_physics)")
+    
     return parser.parse_args()
 
 
@@ -69,7 +79,9 @@ def main():
         "start_layer": args.start_layer,
         "end_layer": args.end_layer,
         "head_idx": args.head_idx,
-        "layer_idx": args.layer_idx
+        "layer_idx": args.layer_idx,
+        "mmlu_question_type": args.mmlu_question_type,
+        "mmlu_subjects": args.mmlu_subjects
     })
     
     # Initialize model and dataset
@@ -82,8 +94,8 @@ def main():
             dataset, 
             args.num_problems, 
             args.batch_size,
-            model_name=args.model,  # Pass model name
-            dataset_name="math"     # Pass dataset name
+            model_name=args.model,
+            dataset_name="math"
         )
     elif args.dataset == "trivia":
         dataset = TriviaQALoader()
@@ -92,8 +104,32 @@ def main():
             dataset, 
             args.num_problems, 
             args.batch_size,
-            model_name=args.model,  # Pass model name
-            dataset_name="trivia"   # Pass dataset name
+            model_name=args.model,
+            dataset_name="trivia"
+        )
+    elif args.dataset == "mmlu":
+        # Create MMLU dataset with filtering options
+        dataset = MMLULoader(
+            split="test",
+            subject_filter=args.mmlu_subjects,
+            question_type_filter=args.mmlu_question_type
+        )
+        
+        # Print dataset statistics
+        stats = dataset.get_stats()
+        print(f"MMLU Dataset loaded:")
+        print(f"  Total questions: {stats['total_questions']}")
+        print(f"  Number of subjects: {stats['num_subjects']}")
+        print(f"  Question types: {stats['question_types']}")
+        print(f"  Subjects: {list(stats['subjects'].keys())}")
+        
+        trainer = MMLUTrainer(
+            model, 
+            dataset, 
+            args.num_problems, 
+            args.batch_size,
+            model_name=args.model,
+            dataset_name="mmlu"
         )
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")

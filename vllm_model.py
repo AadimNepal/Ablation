@@ -62,18 +62,22 @@ class BaseVllmModel:
 
     def _save_and_reload(self, model_copy, **llm_kwargs):
         """Save ablated model and reload in vLLM"""
-        print("Saving ablated model...")
-        os.makedirs(self.checkpoint_path, exist_ok=True)
+        # Generate random 5-digit suffix to avoid conflicts
+        random_suffix = random.randint(10000, 99999)
+        unique_checkpoint_path = f"{self.checkpoint_path}_{random_suffix}"
+        
+        print(f"Saving ablated model to {unique_checkpoint_path}...")
+        os.makedirs(unique_checkpoint_path, exist_ok=True)
         
         # Clean up existing files
-        if os.path.exists(self.checkpoint_path):
-            for file in os.listdir(self.checkpoint_path):
-                file_path = os.path.join(self.checkpoint_path, file)
+        if os.path.exists(unique_checkpoint_path):
+            for file in os.listdir(unique_checkpoint_path):
+                file_path = os.path.join(unique_checkpoint_path, file)
                 if os.path.isfile(file_path):
                     os.unlink(file_path)
         
-        model_copy.save_pretrained(self.checkpoint_path)
-        self.tokenizer.save_pretrained(self.checkpoint_path)
+        model_copy.save_pretrained(unique_checkpoint_path)
+        self.tokenizer.save_pretrained(unique_checkpoint_path)
         
         # Clean up
         del model_copy
@@ -90,7 +94,7 @@ class BaseVllmModel:
         }
         default_params.update(llm_kwargs)
         
-        self.llm = LLM(model=self.checkpoint_path, **default_params)
+        self.llm = LLM(model=unique_checkpoint_path, **default_params)
 
     def zero_ablate(self, layer_number):
         """Zero ablate a single layer - to be implemented by subclasses"""
