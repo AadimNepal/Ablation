@@ -9,18 +9,22 @@ import csv
 
 
 class BaseTrainer(ABC):
-    """Base trainer class with improved result organization"""
+    """Base trainer class with improved result organization and process-safe experiments"""
     
-    def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="unknown"):
+    def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="unknown", dataset_config=""):
         self.model = model
         self.dataset = dataset
         self.num_problems = num_problems
         self.batch_size = batch_size
         self.model_name = model_name
         self.dataset_name = dataset_name
+        self.dataset_config = dataset_config
         
-        # Create organized results directory
-        self.results_dir = f"results/{model_name}-{dataset_name}"
+        # Create organized results directory with dataset config
+        if dataset_config:
+            self.results_dir = f"results/{model_name}-{dataset_name}-{dataset_config}"
+        else:
+            self.results_dir = f"results/{model_name}-{dataset_name}"
         os.makedirs(self.results_dir, exist_ok=True)
         
         # Create timestamp for this experiment run
@@ -64,33 +68,59 @@ class BaseTrainer(ABC):
         pass
 
     def save_spreadsheet(self, results, layer):
-        """Save results as CSV spreadsheet"""
-        csv_filename = f"layer_{layer}_results.csv"
+        """Save results as CSV spreadsheet with unique naming"""
+        # Create unique CSV filename with timestamp and config
+        if self.dataset_config:
+            csv_filename = f"layer_{layer}_{self.dataset_config}_{self.experiment_timestamp}_results.csv"
+        else:
+            csv_filename = f"layer_{layer}_{self.experiment_timestamp}_results.csv"
+        
         csv_filepath = os.path.join(self.results_dir, csv_filename)
         
         with open(csv_filepath, 'w', newline='', encoding='utf-8') as csvfile:
-            fieldnames = [
+            # Dynamic fieldnames based on dataset
+            base_fieldnames = [
                 'question', 
                 'model_response', 
                 'extracted_answer', 
                 'correct_answer', 
                 'model_name',
+                'dataset_config',
                 'is_correct'
             ]
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            # Add Math500-specific fields
+            if self.dataset_name == "math500":
+                base_fieldnames.insert(-2, 'category')  # Insert before model_name
+                base_fieldnames.insert(-2, 'level')    # Insert before model_name
+            
+            writer = csv.DictWriter(
+                csvfile, 
+                fieldnames=base_fieldnames,
+                quoting=csv.QUOTE_ALL,
+                escapechar='\\',
+                lineterminator='\n'
+            )
             writer.writeheader()
             
             for result in results:
-                writer.writerow({
-                    'question': result['prompt'],
-                    'model_response': result['model_response'],
-                    'extracted_answer': result['extracted_prediction'],
-                    'correct_answer': result['ground_truth'],
+                # Base row data
+                cleaned_row = {
+                    'question': str(result['prompt']).replace('\n', ' ').replace('\r', ' '),
+                    'model_response': str(result['model_response']).replace('\n', ' ').replace('\r', ' '),
+                    'extracted_answer': str(result['extracted_prediction']),
+                    'correct_answer': str(result['ground_truth']),
                     'model_name': self.model_name,
+                    'dataset_config': self.dataset_config,
                     'is_correct': 1 if result['is_correct'] else 0
-                })
-        
-        print(f"Spreadsheet saved to: {csv_filepath}")
+                }
+                
+                # Add Math500-specific data
+                if self.dataset_name == "math500":
+                    cleaned_row['category'] = result.get('category', 'unknown')
+                    cleaned_row['level'] = result.get('level', 'unknown')
+                
+                writer.writerow(cleaned_row)
 
     def evaluate_batch(self, layer="baseline"):
         """Evaluate model on dataset using batched processing with detailed saving"""
@@ -169,14 +199,19 @@ class BaseTrainer(ABC):
                     f"layer_{layer}_correct": int(is_correct)
                 })
         
-        # Save detailed results for this layer
-        layer_filename = f"layer_{layer}_detailed.json"
+        # Save detailed results for this layer with unique naming
+        if self.dataset_config:
+            layer_filename = f"layer_{layer}_{self.dataset_config}_{self.experiment_timestamp}_detailed.json"
+        else:
+            layer_filename = f"layer_{layer}_{self.experiment_timestamp}_detailed.json"
+        
         layer_filepath = os.path.join(self.results_dir, layer_filename)
         
         layer_data = {
             "experiment_info": {
                 "model": self.model_name,
                 "dataset": self.dataset_name,
+                "dataset_config": self.dataset_config,
                 "layer": layer,
                 "timestamp": self.experiment_timestamp,
                 "total_problems": total_problems,
@@ -205,79 +240,97 @@ class BaseTrainer(ABC):
         return correct / total
     
     def run_layer_ablation(self):
-        """Run layer-by-layer ablation experiment with organized results"""
+        """Run layer-by-layer ablation experiment with process-safe directories"""
         print(f"Starting layer ablation experiment for {self.model_name} on {self.dataset_name}")
+        if self.dataset_config:
+            print(f"Dataset configuration: {self.dataset_config}")
         print(f"Results will be saved to: {self.results_dir}")
         
-        # Evaluate baseline model
-        print("Evaluating baseline model...")
-        baseline_accuracy = self.evaluate_batch("baseline")
-        wandb.log({"layer_accuracy": baseline_accuracy, "layer_number": "baseline"})
+        # Create process-safe experiment identifier
+        experiment_base = f"{self.model_name}_{self.dataset_name}"
+        if self.dataset_config:
+            experiment_base += f"_{self.dataset_config}"
         
-        results_summary = []
-        num_layers = self.get_num_layers()
-        print(f"Model has {num_layers} layers")
+        # Setup process-safe experiment directory
+        self.model.setup_experiment(experiment_base)
         
-        # Run layer-by-layer ablation
-        for layer_idx in range(num_layers):
-            if layer_idx == 0:
-                # Special case for layer 0 - just log 0 accuracy
-                wandb.log({
-                    "layer_accuracy": 0,
-                    "layer_number": 0
-                })
-                results_summary.append({
-                    "layer": 0, 
-                    "accuracy": 0, 
-                    "delta": baseline_accuracy,
-                    "note": "Layer 0 assumed to have 0 accuracy"
-                })
-                continue
+        try:
+            # Evaluate baseline model
+            print("Evaluating baseline model...")
+            baseline_accuracy = self.evaluate_batch("baseline")
+            wandb.log({"layer_accuracy": baseline_accuracy, "layer_number": "baseline"})
+            
+            results_summary = []
+            num_layers = self.get_num_layers()
+            print(f"Model has {num_layers} layers")
+            
+            # Run layer-by-layer ablation
+            for layer_idx in range(num_layers):
+                if layer_idx == 0:
+                    # Special case for layer 0 - just log 0 accuracy
+                    wandb.log({
+                        "layer_accuracy": 0,
+                        "layer_number": 0
+                    })
+                    results_summary.append({
+                        "layer": 0, 
+                        "accuracy": 0, 
+                        "delta": baseline_accuracy,
+                        "note": "Layer 0 assumed to have 0 accuracy"
+                    })
+                    continue
 
-            print(f"Ablating layer {layer_idx}...")
-            self.model.zero_ablate(layer_idx)
+                print(f"Ablating layer {layer_idx}...")
+                self.model.zero_ablate(layer_idx)
+                
+                accuracy = self.evaluate_batch(layer=layer_idx)
+                delta = baseline_accuracy - accuracy
+                
+                wandb.log({
+                    "layer_accuracy": accuracy,
+                    "layer_number": layer_idx
+                })
+                
+                results_summary.append({
+                    "layer": layer_idx, 
+                    "accuracy": accuracy, 
+                    "delta": delta
+                })
+                
+                print(f"Layer {layer_idx}: {accuracy:.4f} (Δ {delta:.4f})")
             
-            accuracy = self.evaluate_batch(layer=layer_idx)
-            delta = baseline_accuracy - accuracy
+            # Save overall experiment summary with unique naming
+            experiment_summary = {
+                "experiment_info": {
+                    "model": self.model_name,
+                    "dataset": self.dataset_name,
+                    "dataset_config": self.dataset_config,
+                    "experiment_type": "layer_ablation",
+                    "timestamp": self.experiment_timestamp,
+                    "total_problems": self.num_problems,
+                    "batch_size": self.batch_size,
+                    "num_layers": num_layers,
+                    "process_id": getattr(self.model, 'process_id', 'unknown')
+                },
+                "baseline_accuracy": baseline_accuracy,
+                "layer_results": results_summary,
+                "files_generated": [
+                    f"layer_baseline_{self.dataset_config}_{self.experiment_timestamp}_detailed.json" if self.dataset_config else f"layer_baseline_{self.experiment_timestamp}_detailed.json",
+                    *[f"layer_{i}_{self.dataset_config}_{self.experiment_timestamp}_detailed.json" if self.dataset_config else f"layer_{i}_{self.experiment_timestamp}_detailed.json" for i in range(num_layers) if i != 0]
+                ]
+            }
             
-            wandb.log({
-                "layer_accuracy": accuracy,
-                "layer_number": layer_idx
-            })
+            summary_filepath = os.path.join(self.results_dir, f"experiment_summary_{self.experiment_timestamp}.json")
+            with open(summary_filepath, "w") as f:
+                json.dump(experiment_summary, f, indent=2)
             
-            results_summary.append({
-                "layer": layer_idx, 
-                "accuracy": accuracy, 
-                "delta": delta
-            })
+            print(f"\nExperiment completed!")
+            print(f"Summary saved to: {summary_filepath}")
+            print(f"All detailed results in: {self.results_dir}")
             
-            print(f"Layer {layer_idx}: {accuracy:.4f} (Δ {delta:.4f})")
+            return {"baseline": baseline_accuracy, "results": results_summary}
         
-        # Save overall experiment summary
-        experiment_summary = {
-            "experiment_info": {
-                "model": self.model_name,
-                "dataset": self.dataset_name,
-                "experiment_type": "layer_ablation",
-                "timestamp": self.experiment_timestamp,
-                "total_problems": self.num_problems,
-                "batch_size": self.batch_size,
-                "num_layers": num_layers
-            },
-            "baseline_accuracy": baseline_accuracy,
-            "layer_results": results_summary,
-            "files_generated": [
-                f"layer_baseline_detailed.json",
-                *[f"layer_{i}_detailed.json" for i in range(num_layers) if i != 0]
-            ]
-        }
-        
-        summary_filepath = os.path.join(self.results_dir, f"experiment_summary_{self.experiment_timestamp}.json")
-        with open(summary_filepath, "w") as f:
-            json.dump(experiment_summary, f, indent=2)
-        
-        print(f"\nExperiment completed!")
-        print(f"Summary saved to: {summary_filepath}")
-        print(f"All detailed results in: {self.results_dir}")
-        
-        return {"baseline": baseline_accuracy, "results": results_summary}
+        finally:
+            # ALWAYS clean up, even if experiment fails
+            print("Cleaning up experiment checkpoint directory...")
+            self.model.cleanup_experiment()

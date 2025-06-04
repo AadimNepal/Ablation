@@ -4,14 +4,19 @@ from torch import nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import os, gc, copy
 import random
+import shutil
+import tempfile
+from datetime import datetime
 
 
 class BaseVllmModel:
-    """Base class for all vLLM models with common functionality"""
+    """Base class for all vLLM models with process-safe experiment directories"""
     
     def __init__(self, model_id, checkpoint_path, **llm_kwargs):
         self.model_id = model_id
-        self.checkpoint_path = checkpoint_path
+        self.base_checkpoint_path = checkpoint_path
+        self.experiment_checkpoint_dir = None
+        self.process_id = None
         
         print("Loading HuggingFace model...")
         self.hf_model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True, device_map="cpu")
@@ -30,6 +35,38 @@ class BaseVllmModel:
         print("HuggingFace model loaded.")
         
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
+
+    def setup_experiment(self, experiment_base_name):
+        """Setup process-safe experiment-specific checkpoint directory"""
+        # Create a truly unique process identifier
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]  # Include microseconds
+        pid = os.getpid()  # Process ID
+        random_suffix = random.randint(1000, 9999)
+        
+        self.process_id = f"{timestamp}_{pid}_{random_suffix}"
+        self.experiment_checkpoint_dir = f"{self.base_checkpoint_path}_{experiment_base_name}_{self.process_id}"
+        
+        # Create the experiment directory
+        os.makedirs(self.experiment_checkpoint_dir, exist_ok=True)
+        print(f"Process-safe experiment checkpoint: {self.experiment_checkpoint_dir}")
+        
+        # Create a lockfile to prevent conflicts
+        self.lockfile_path = f"{self.experiment_checkpoint_dir}.lock"
+        with open(self.lockfile_path, 'w') as f:
+            f.write(f"PID: {pid}\nTimestamp: {timestamp}\nExperiment: {experiment_base_name}\n")
+
+    def cleanup_experiment(self):
+        """Clean up the experiment checkpoint directory and lockfile"""
+        if self.experiment_checkpoint_dir and os.path.exists(self.experiment_checkpoint_dir):
+            print(f"Cleaning up experiment directory: {self.experiment_checkpoint_dir}")
+            shutil.rmtree(self.experiment_checkpoint_dir)
+            
+        # Remove lockfile
+        if hasattr(self, 'lockfile_path') and os.path.exists(self.lockfile_path):
+            os.remove(self.lockfile_path)
+            
+        self.experiment_checkpoint_dir = None
+        self.process_id = None
 
     def generate(self, prompt, **kwargs):
         if isinstance(prompt, str):
@@ -61,23 +98,26 @@ class BaseVllmModel:
         return copy.deepcopy(self.hf_model)
 
     def _save_and_reload(self, model_copy, **llm_kwargs):
-        """Save ablated model and reload in vLLM"""
-        # Generate random 5-digit suffix to avoid conflicts
-        random_suffix = random.randint(10000, 99999)
-        unique_checkpoint_path = f"{self.checkpoint_path}_{random_suffix}"
+        """Save ablated model using process-safe directory"""
+        if not self.experiment_checkpoint_dir:
+            raise ValueError("Must call setup_experiment() before ablating layers!")
         
-        print(f"Saving ablated model to {unique_checkpoint_path}...")
-        os.makedirs(unique_checkpoint_path, exist_ok=True)
+        # Check if our experiment directory still exists (safety check)
+        if not os.path.exists(self.experiment_checkpoint_dir):
+            raise RuntimeError(f"Experiment directory disappeared: {self.experiment_checkpoint_dir}")
         
-        # Clean up existing files
-        if os.path.exists(unique_checkpoint_path):
-            for file in os.listdir(unique_checkpoint_path):
-                file_path = os.path.join(unique_checkpoint_path, file)
-                if os.path.isfile(file_path):
-                    os.unlink(file_path)
+        checkpoint_path = self.experiment_checkpoint_dir
         
-        model_copy.save_pretrained(unique_checkpoint_path)
-        self.tokenizer.save_pretrained(unique_checkpoint_path)
+        print(f"Saving ablated model to {checkpoint_path}...")
+        
+        # Clean existing files in the directory
+        for file in os.listdir(checkpoint_path):
+            file_path = os.path.join(checkpoint_path, file)
+            if os.path.isfile(file_path):
+                os.unlink(file_path)
+        
+        model_copy.save_pretrained(checkpoint_path)
+        self.tokenizer.save_pretrained(checkpoint_path)
         
         # Clean up
         del model_copy
@@ -94,7 +134,7 @@ class BaseVllmModel:
         }
         default_params.update(llm_kwargs)
         
-        self.llm = LLM(model=unique_checkpoint_path, **default_params)
+        self.llm = LLM(model=checkpoint_path, **default_params)
 
     def zero_ablate(self, layer_number):
         """Zero ablate a single layer - to be implemented by subclasses"""
@@ -204,7 +244,8 @@ class Qwen257BInstruct(BaseVllmModel, QwenModelMixin):
     def __init__(self):
         super().__init__(
             model_id="Qwen/Qwen2.5-7B-Instruct",
-            checkpoint_path="./ablated_model_qwen257binstruct"
+            checkpoint_path="./ablated_model_qwen257binstruct",
+            max_model_len=2048  # Fixed prompt length issue
         )
         # Override sampling params for instruct model
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=100)
@@ -226,7 +267,7 @@ class DeepSeekR1DistillQwen7B(BaseVllmModel, QwenModelMixin):
             model_id="deepseek-ai/deepseek-R1-Distill-Qwen-7B",
             checkpoint_path="./ablated_model_deepseekqwen7b",
             dtype="float16",
-            max_model_len=1000,
+            max_model_len=2048,  # Fixed prompt length issue
             gpu_memory_utilization=0.85
         )
         # Override sampling params
@@ -242,7 +283,7 @@ class DeepSeekR1DistillQwen7B(BaseVllmModel, QwenModelMixin):
         self._save_and_reload(
             model_copy,
             dtype="float16",
-            max_model_len=1000,
+            max_model_len=2048,
             gpu_memory_utilization=0.85
         )
         return f"Layer {layer_number} ablated successfully"

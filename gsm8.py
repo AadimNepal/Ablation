@@ -1,6 +1,117 @@
 from datasets import load_dataset
 import re
 
+class Math500Loader:
+    def __init__(self, split="test", category_filter=None):
+        """
+        Load Math500 dataset with filtering options
+        
+        Args:
+            split: "test" (Math500 only has test split)
+            category_filter: List of specific categories to include, or None for all
+                           Valid categories: ["Prealgebra", "Algebra", "Number Theory", 
+                                            "Counting & Probability", "Geometry", 
+                                            "Intermediate Algebra", "Precalculus"]
+        """
+        # Load the Math500 dataset
+        self.dataset = load_dataset("HuggingFaceH4/MATH-500")[split]
+        
+        # Define category mapping for consistency
+        self.valid_categories = {
+            "prealgebra": "Prealgebra",
+            "algebra": "Algebra", 
+            "number_theory": "Number Theory",
+            "counting_and_probability": "Counting & Probability",
+            "geometry": "Geometry",
+            "intermediate_algebra": "Intermediate Algebra", 
+            "precalculus": "Precalculus"
+        }
+        
+        # Apply filtering
+        self.filtered_data = self._apply_filters(category_filter)
+        
+    def _apply_filters(self, category_filter):
+        """Apply category filter to the dataset"""
+        filtered_data = []
+        
+        for item in self.dataset:
+            category = item['subject']  # Use 'subject' field
+            
+            # Apply category filter
+            if category_filter is not None:
+                # Normalize category names for comparison
+                normalized_filter = [self._normalize_category(cat) for cat in category_filter]
+                if self._normalize_category(category) not in normalized_filter:
+                    continue
+            
+            filtered_data.append(item)
+        
+        return filtered_data
+    
+    def _normalize_category(self, category):
+        """Normalize category names for consistent comparison"""
+        # Convert to lowercase and replace spaces/symbols
+        normalized = category.lower().replace(" ", "_").replace("&", "and")
+        return normalized
+
+    def __getitem__(self, idx):
+        """Get item from filtered dataset"""
+        item = self.filtered_data[idx]
+        
+        problem = item['problem']
+        solution = item['solution']
+        answer = item['answer']
+        category = item['subject']  # Use 'subject' not 'type'
+        level = item['level']
+        
+        # Extract the final answer from the solution if needed
+        # Math500 already has the answer field, but let's make sure it's clean
+        if answer:
+            final_answer = str(answer).strip()
+        else:
+            # Fallback: try to extract from solution using boxed format
+            import re
+            answer_match = re.search(r'\\boxed\{([^}]+)\}', solution)
+            if answer_match:
+                final_answer = answer_match.group(1)
+            else:
+                # Last resort: use the answer field as is
+                final_answer = str(answer) if answer else ""
+        
+        return {
+            "problem": problem,
+            "solution": solution,
+            "final_answer": final_answer,
+            "category": category,
+            "level": level
+        }
+    
+    def __len__(self):
+        return len(self.filtered_data)
+    
+    def get_categories(self):
+        """Get list of unique categories in the filtered dataset"""
+        return list(set(item['subject'] for item in self.filtered_data))
+    
+    def get_stats(self):
+        """Get statistics about the filtered dataset"""
+        categories = {}
+        levels = {}
+        
+        for item in self.filtered_data:
+            category = item['subject']  # Use 'subject' not 'type'
+            level = item['level']
+            
+            categories[category] = categories.get(category, 0) + 1
+            levels[level] = levels.get(level, 0) + 1
+        
+        return {
+            "total_problems": len(self.filtered_data),
+            "categories": categories,
+            "levels": levels,
+            "num_categories": len(categories)
+        }
+
 class GSM8KLoader:
     def __init__(self, split="train"):
         self.dataset = load_dataset("gsm8k", "main")[split]

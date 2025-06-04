@@ -4,8 +4,8 @@ from base_trainer import BaseTrainer
 class TriviaTrainer(BaseTrainer):
     """Trainer specialized for TriviaQA factual recall"""
     
-    def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="trivia"):
-        super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name)
+    def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="trivia", dataset_config=""):
+        super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name, dataset_config)
     
     def extract_answer(self, output):
         """Return the full output - we'll check if correct answer is contained within"""

@@ -4,9 +4,9 @@ from base_trainer import BaseTrainer
 class MMLUTrainer(BaseTrainer):
     """Trainer specialized for MMLU multiple choice questions"""
     
-    def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="mmlu"):
-        super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name)
-    
+    def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="mmlu", dataset_config=""):
+        super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name, dataset_config)
+
     def extract_answer(self, output):
         """Extract the letter answer (A, B, C, D) from model output"""
         if not output:
