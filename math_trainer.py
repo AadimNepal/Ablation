@@ -7,9 +7,26 @@ class MathTrainer(BaseTrainer):
     def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="math"):
         super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name)
     
+    def create_result_entry(self, item, prompt, response, ground_truth, prediction, is_correct, problem_index):
+        """Create GSM8K-specific result entry with question, solution steps"""
+        return {
+            "problem_index": problem_index,
+            "question": item['question'],
+            "ground_truth": ground_truth,
+            "solution_steps": item.get('solution_steps', ''),
+            "prompt": prompt,
+            "model_response": response,
+            "extracted_prediction": prediction,
+            "is_correct": is_correct
+        }
+    
     def extract_answer(self, output):
-        """Extract numerical answer from math model output"""
-        return output
+        """Extract numerical answer from math model output - return only the value for JSON"""
+        parsed_result = parse(output)
+        # If parse returns a tuple/list, take index 1, otherwise return as is
+        if isinstance(parsed_result, (tuple, list)) and len(parsed_result) > 1:
+            return parsed_result[1]
+        return parsed_result
     
     def prepare_prompt(self, item):
         """Prepare prompt for math problem"""
@@ -57,7 +74,6 @@ class MathTrainer(BaseTrainer):
         else:
             print(f"Unknown model {self.model_name}, using default prompt")
             return f"Solve this math problem step by step:\n{problem}"
-
 
     def get_ground_truth(self, item):
         """Get ground truth answer from GSM8K item"""

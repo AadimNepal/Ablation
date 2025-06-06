@@ -36,20 +36,14 @@ def get_model(model_name):
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="Ablation study for LLMs")
-    parser.add_argument("--model", type=str, default="qwen-chat",
+    parser = argparse.ArgumentParser(description="Layer ablation study for LLMs")
+    parser.add_argument("--model", type=str, default="qwen-instruct",
                         choices=["qwen-instruct", "deepseek-distilled", "qwen-base", 
                                 "llama-base", "llama-instruct", "llama-distilled", "open-reasoner", "llama-rl"])
     parser.add_argument("--dataset", type=str, default="math", 
                         choices=["math", "trivia", "mmlu", "math500"])
     parser.add_argument("--num_problems", type=int, default=50)
     parser.add_argument("--batch_size", type=int, default=16)
-    parser.add_argument("--ablation_type", type=str, default="layer", 
-                        choices=["layer", "head", "layer_range", "permute"])
-    parser.add_argument("--start_layer", type=int, default=0)
-    parser.add_argument("--end_layer", type=int, default=5)
-    parser.add_argument("--head_idx", type=int, default=0)
-    parser.add_argument("--layer_idx", type=int, default=0)
     
     # MMLU-specific arguments
     parser.add_argument("--mmlu_question_type", type=str, default=None,
@@ -74,9 +68,9 @@ def main():
     # Initialize wandb with simplified run name
     wandb.login(key="e37e9ef98269d14868961ae71509aacef7c8348a")
     
-    run_name = f"{args.model}_{args.dataset}_{args.ablation_type}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    run_name = f"{args.model}_{args.dataset}_layer_ablation_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
-    wandb.init(project=f"GGGGGGG", name=run_name)
+    wandb.init(project=f"KeithRoss", name=run_name)
     
     # Log experiment parameters
     wandb.config.update({
@@ -84,11 +78,7 @@ def main():
         "dataset": args.dataset,
         "num_problems": args.num_problems,
         "batch_size": args.batch_size,
-        "ablation_type": args.ablation_type,
-        "start_layer": args.start_layer,
-        "end_layer": args.end_layer,
-        "head_idx": args.head_idx,
-        "layer_idx": args.layer_idx,
+        "ablation_type": "layer",
         "mmlu_question_type": args.mmlu_question_type,
         "mmlu_subjects": args.mmlu_subjects,
         "math500_categories": args.math500_categories
@@ -168,21 +158,12 @@ def main():
     else:
         raise ValueError(f"Unknown dataset: {args.dataset}")
     
-    # Run experiment based on ablation type
-    if args.ablation_type == "layer":
-        results = trainer.run_layer_ablation()
-    elif args.ablation_type == "head":
-        results = trainer.run_head_ablation(args.layer_idx, args.head_idx)
-    elif args.ablation_type == "layer_range":
-        results = trainer.run_layer_range_ablation(args.start_layer, args.end_layer)
-    elif args.ablation_type == "permute":
-        results = trainer.run_permutation(args.start_layer, args.end_layer)
-    else:
-        raise ValueError(f"Unknown ablation type: {args.ablation_type}")
+    # Run layer ablation experiment
+    results = trainer.run_layer_ablation()
     
-    print(f"\n🎉 Experiment completed!")
+    print(f"\n🎉 Layer ablation experiment completed!")
     print(f"📁 Results saved in: results/{args.model}-{args.dataset}/")
-    print(f"📊 Check the detailed JSON files for questions, responses, and correctness")
+    print(f"📊 Check wandb for detailed accuracy plots")
     
     wandb.finish()
 

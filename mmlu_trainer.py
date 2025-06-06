@@ -1,11 +1,72 @@
 import re
 from base_trainer import BaseTrainer
+import os
+from datetime import datetime
 
 class MMLUTrainer(BaseTrainer):
     """Trainer specialized for MMLU multiple choice questions"""
     
     def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="mmlu"):
         super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name)
+    
+    def _create_experiment_directory(self):
+        """Create MMLU-specific experiment directory with subject/question type info"""
+        # Get dataset info to create descriptive name
+        try:
+            stats = self.dataset.get_stats()
+            subjects = list(stats['subjects'].keys())
+            question_types = stats['question_types']
+            
+            # Create a descriptive name based on filtering
+            if len(subjects) > 5:
+                subject_str = f"all-{len(subjects)}subjects"
+            else:
+                subject_str = "-".join(subjects[:3])
+                if len(subjects) > 3:
+                    subject_str += f"-plus{len(subjects)-3}more"
+            
+            # Add question type if filtered
+            if question_types['factual'] == 0:
+                type_str = "reasoning"
+            elif question_types['reasoning'] == 0:
+                type_str = "factual"
+            else:
+                type_str = "mixed"
+                
+        except:
+            subject_str = "all"
+            type_str = "mixed"
+        
+        # Create directory name: model-dataset-subjects-type-timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dir_name = f"{self.model_name}-{self.dataset_name}-{subject_str}-{type_str}-{timestamp}"
+        
+        experiment_path = os.path.join("results", dir_name)
+        os.makedirs(experiment_path, exist_ok=True)
+        
+        return experiment_path
+    
+    def create_result_entry(self, item, prompt, response, ground_truth, prediction, is_correct, problem_index):
+        """Create MMLU-specific result entry with choices, subject, and question type"""
+        return {
+            "problem_index": problem_index,
+            "question": item['question'],
+            "choices": item['choices'],
+            "subject": item['subject'],
+            "question_type": item['question_type'],
+            "ground_truth": ground_truth,
+            "ground_truth_text": item['answer_text'],
+            "prompt": prompt,
+            "model_response": response,
+            "extracted_prediction": prediction,
+            "is_correct": is_correct,
+            "choice_details": {
+                "answer_idx": item['answer_idx'],
+                "answer_letter": item['answer_letter'],
+                "predicted_letter": prediction,
+                "all_choices": {chr(ord('A') + i): choice for i, choice in enumerate(item['choices'])}
+            }
+        }
 
     def extract_answer(self, output):
         """Extract the letter answer (A, B, C, D) from model output"""

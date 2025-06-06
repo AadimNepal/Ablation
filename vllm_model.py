@@ -4,6 +4,7 @@ from torch import nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import os, gc, copy
 import random
+from datetime import datetime
 from vllm.distributed.parallel_state import cleanup_dist_env_and_memory
 
 
@@ -204,12 +205,12 @@ class LlamaModelMixin:
 
 class Qwen7BChat(BaseVllmModel, QwenModelMixin):
     def __init__(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         super().__init__(
             model_id="Qwen/Qwen-7B-Chat",
-            checkpoint_path="./ablated_model_qwen7bchat",
-            enforce_eager=True  # Explicit disable compilation
+            checkpoint_path=f"./ablated_model_qwen7bchat_{timestamp}",
+            enforce_eager=True
         )
-        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
     
     def _format_prompt(self, prompt):
@@ -229,16 +230,16 @@ class Qwen7BChat(BaseVllmModel, QwenModelMixin):
 
 class Qwen257BBase(BaseVllmModel, QwenModelMixin):
     def __init__(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         super().__init__(
             model_id="Qwen/Qwen2.5-7B",
-            checkpoint_path="./ablated_model_qwen257bbase",
+            checkpoint_path=f"./ablated_model_qwen257bbase_{timestamp}",
             dtype="half",
             max_model_len=32768,  
             max_seq_len_to_capture=1000,
             gpu_memory_utilization=0.7,
-            enforce_eager=True  # Explicit disable compilation
+            enforce_eager=True
         )
-        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
@@ -258,12 +259,12 @@ class Qwen257BBase(BaseVllmModel, QwenModelMixin):
 
 class Qwen257BInstruct(BaseVllmModel, QwenModelMixin):
     def __init__(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         super().__init__(
             model_id="Qwen/Qwen2.5-7B-Instruct",
-            checkpoint_path="./ablated_model_qwen257binstruct",
-            enforce_eager=True  # Explicit disable compilation
+            checkpoint_path=f"./ablated_model_qwen257binstruct_{timestamp}",
+            enforce_eager=True
         )
-        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
@@ -279,15 +280,15 @@ class Qwen257BInstruct(BaseVllmModel, QwenModelMixin):
 
 class DeepSeekR1DistillQwen7B(BaseVllmModel, QwenModelMixin):
     def __init__(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         super().__init__(
             model_id="deepseek-ai/deepseek-R1-Distill-Qwen-7B",
-            checkpoint_path="./ablated_model_deepseekqwen7b",
+            checkpoint_path=f"./ablated_model_deepseekqwen7b_{timestamp}",
             dtype="float16",
             max_model_len=1000,
             gpu_memory_utilization=0.85,
-            enforce_eager=True  # Explicit disable compilation
+            enforce_eager=True
         )
-        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
@@ -309,14 +310,14 @@ class DeepSeekR1DistillQwen7B(BaseVllmModel, QwenModelMixin):
 
 class Llama318BBase(BaseVllmModel, LlamaModelMixin):
     def __init__(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         super().__init__(
             model_id="meta-llama/Llama-3.1-8B",
-            checkpoint_path="./ablated_model_llama318bbasedkkk",
+            checkpoint_path=f"./ablated_model_llama318bbase_{timestamp}",
             max_model_len=31768,
             gpu_memory_utilization=0.9,
-            enforce_eager=True  # Explicit disable compilation
+            enforce_eager=True
         )
-        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
@@ -337,13 +338,13 @@ class Llama318BBase(BaseVllmModel, LlamaModelMixin):
 
 class Llama318BInstruct(BaseVllmModel, LlamaModelMixin):
     def __init__(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         super().__init__(
             model_id="meta-llama/Llama-3.1-8B-Instruct",
-            checkpoint_path="./ablated_model_llama318binstruct",
+            checkpoint_path=f"./ablated_model_llama318binstruct_{timestamp}",
             max_model_len=31768,
-            enforce_eager=True  # Explicit disable compilation
+            enforce_eager=True
         )
-        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
@@ -363,14 +364,14 @@ class Llama318BInstruct(BaseVllmModel, LlamaModelMixin):
 
 class DeepSeekR1DistilledLlama(BaseVllmModel, LlamaModelMixin):
     def __init__(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         super().__init__(
             model_id="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
-            checkpoint_path="./ablated_model_deepseek_r1_8b",
+            checkpoint_path=f"./ablated_model_deepseek_r1_8b_{timestamp}",
             max_model_len=32768,
             gpu_memory_utilization=0.90,
-            enforce_eager=True  # Explicit disable compilation
+            enforce_eager=True
         )
-        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
@@ -391,13 +392,13 @@ class DeepSeekR1DistilledLlama(BaseVllmModel, LlamaModelMixin):
 
 class OpenReasonerBase(BaseVllmModel, QwenModelMixin):
     def __init__(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         super().__init__(
             model_id="Open-Reasoner-Zero/Open-Reasoner-Zero-7B",
-            checkpoint_path="./ablated_model_open_reasoner_zero",
+            checkpoint_path=f"./ablated_model_open_reasoner_zero_{timestamp}",
             max_model_len=32768,
-            enforce_eager=True  # Explicit disable compilation
+            enforce_eager=True
         )
-        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
@@ -417,14 +418,14 @@ class OpenReasonerBase(BaseVllmModel, QwenModelMixin):
 
 class Llama31SimpleRLZoo(BaseVllmModel, LlamaModelMixin):
     def __init__(self):
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]
         super().__init__(
             model_id="hkust-nlp/Llama-3.1-8B-SimpleRL-Zoo",
-            checkpoint_path="./ablated_model_llama318bsimplerl",
+            checkpoint_path=f"./ablated_model_llama318bsimplerl_{timestamp}",
             max_model_len=31768,
             gpu_memory_utilization=0.9,
-            enforce_eager=True  # Explicit disable compilation
+            enforce_eager=True
         )
-        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):

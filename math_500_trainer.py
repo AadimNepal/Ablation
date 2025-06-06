@@ -1,6 +1,8 @@
 from base_trainer import BaseTrainer
 from math_verify import parse, verify
 from func_timeout import func_timeout, FunctionTimedOut
+import os
+from datetime import datetime
 
 class Math500Trainer(BaseTrainer):
     """Trainer specialized for Math500 problems"""
@@ -8,9 +10,56 @@ class Math500Trainer(BaseTrainer):
     def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="math500"):
         super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name)
     
+    def _create_experiment_directory(self):
+        """Create Math500-specific experiment directory with category info"""
+        # Get dataset info to create descriptive name
+        try:
+            stats = self.dataset.get_stats()
+            categories = list(stats['categories'].keys())
+            
+            # Create a descriptive name
+            if len(categories) == stats['num_categories'] and stats['num_categories'] > 3:
+                # All categories - use "all"
+                category_str = "all"
+            else:
+                # Specific categories - join with hyphens, limit length
+                category_str = "-".join(categories[:3])  # Take first 3 to avoid too long names
+                if len(categories) > 3:
+                    category_str += f"-plus{len(categories)-3}more"
+        except:
+            category_str = "all"
+        
+        # Create directory name: model-dataset-categories-timestamp
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dir_name = f"{self.model_name}-{self.dataset_name}-{category_str}-{timestamp}"
+        
+        experiment_path = os.path.join("results", dir_name)
+        os.makedirs(experiment_path, exist_ok=True)
+        
+        return experiment_path
+    
+    def create_result_entry(self, item, prompt, response, ground_truth, prediction, is_correct, problem_index):
+        """Create Math500-specific result entry with category, level, and verification details"""
+        return {
+            "problem_index": problem_index,
+            "problem": item['problem'],
+            "category": item['category'],
+            "level": item['level'],
+            "ground_truth": ground_truth,
+            "full_solution": item.get('solution', ''),
+            "prompt": prompt,
+            "model_response": response,
+            "extracted_prediction": prediction,
+            "is_correct": is_correct
+        }
+    
     def extract_answer(self, output):
-        """Extract answer from Math500 model output using math_verify"""
-        return output
+        """Extract answer from Math500 model output using math_verify - return only the value for JSON"""
+        parsed_result = parse(output)
+        # If parse returns a tuple/list, take index 1, otherwise return as is
+        if isinstance(parsed_result, (tuple, list)) and len(parsed_result) > 1:
+            return parsed_result[1]
+        return parsed_result
         
     def prepare_prompt(self, item):
         """Prepare prompt for Math500 problem"""
@@ -59,14 +108,12 @@ class Math500Trainer(BaseTrainer):
             print(f"Unknown model {self.model_name}, using default prompt")
             return f"Solve this math problem step by step:\n{problem}"
 
-
     def get_ground_truth(self, item):
         """Get ground truth answer from Math500 item"""
         return item['final_answer']
 
     def check_correctness(self, prediction, ground_truth):
         """Check if prediction matches ground truth for math problems using math_verify"""
-
         gold = parse(ground_truth)
         answer = parse(prediction)
         return verify(gold, answer)

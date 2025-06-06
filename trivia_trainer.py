@@ -1,11 +1,40 @@
 import re
 from base_trainer import BaseTrainer
+import os
+from datetime import datetime
 
 class TriviaTrainer(BaseTrainer):
     """Trainer specialized for TriviaQA factual recall"""
     
     def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="trivia"):
         super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name)
+    
+    def _create_experiment_directory(self):
+        """Create TriviaQA-specific experiment directory"""
+        # TriviaQA doesn't have complex filtering, so keep it simple
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        dir_name = f"{self.model_name}-{self.dataset_name}-{timestamp}"
+        
+        experiment_path = os.path.join("results", dir_name)
+        os.makedirs(experiment_path, exist_ok=True)
+        
+        return experiment_path
+    
+    def create_result_entry(self, item, prompt, response, ground_truth, prediction, is_correct, problem_index):
+        """Create TriviaQA-specific result entry with question source and answer aliases"""
+        return {
+            "problem_index": problem_index,
+            "question": item['question'],
+            "ground_truth": ground_truth,
+            "answer_aliases": item.get('answer_aliases', []),
+            "normalized_aliases": item.get('normalized_aliases', []),
+            "question_id": item.get('question_id', ''),
+            "question_source": item.get('question_source', ''),
+            "prompt": prompt,
+            "model_response": response,
+            "extracted_prediction": prediction,
+            "is_correct": is_correct
+        }
     
     def extract_answer(self, output):
         """Return the full output - we'll check if correct answer is contained within"""
