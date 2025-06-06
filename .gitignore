@@ -29,6 +29,8 @@ ablated_model_qwen257bbase/
 ablated_model*
 ablation.sh
 submit_all.sh
+.ipynb_checkpoints
+.ipynb_checkpoints/Test-checkpoint.ipynb
 
 
 

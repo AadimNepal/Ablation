@@ -4,42 +4,61 @@ from math_verify import parse, verify
 class MathTrainer(BaseTrainer):
     """Trainer specialized for math problems (GSM8K)"""
     
-    def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="math", dataset_config=""):
-        super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name, dataset_config)
+    def __init__(self, model, dataset, num_problems=50, batch_size=16, model_name="unknown", dataset_name="math"):
+        super().__init__(model, dataset, num_problems, batch_size, model_name, dataset_name)
     
     def extract_answer(self, output):
         """Extract numerical answer from math model output"""
-        result = parse(output)
-        if isinstance(result, list) and len(result) > 0:
-            if len(result) > 1 and isinstance(result[1], str):
-                return result[1]
-            return str(result[0])
-        return None
+        return output
     
     def prepare_prompt(self, item):
         """Prepare prompt for math problem"""
-        question = item['question']
-        
-        # Use special prompts only for distilled models
-        if "distilled" in self.model_name.lower():
-            if "deepseek" in self.model_name.lower():
-                return (
-                    "Solve this math problem step by step. Be concise but complete. "
-                    "After solving, write your FINAL ANSWER as '\\boxed{your_answer}' on a new line.\n\n"
-                    f"Question: {question}\n"
-                    "Solution:"
-                )
-            elif "llama" in self.model_name.lower():
-                return (
-                    "<｜User｜>Solve the following math problem step by step. "
-                    "Show your reasoning clearly and provide the final answer as '\\boxed{your_answer}'.\n\n"
-                    f"Problem: {question}\n"
-                    "<｜Assistant｜>"
-                )
-        
-        # Default: just return the question for all other models
-        return question
-    
+        problem = item['question']
+
+        if self.model_name.lower() in ["qwen-base", "qwen-instruct"]:
+            question = (
+                "<|im_start|>system\n"
+                "Please reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n"
+                "<|im_start|>user\n"
+                f"{problem}"
+                "<|im_end|>\n"
+                "<|im_start|>assistant\n"
+            )
+            return question
+            
+        elif self.model_name.lower() in ["deepseek-distilled", "open-reasoner", "llama-distilled"]:
+            question = (
+                "A conversation between User and Assistant. The User asks a question, and the Assistant solves it. "
+                "The Assistant first thinks about the reasoning process in the mind and then provides the User with the answer. "
+                "The reasoning process is enclosed within <think> </think> and answer is enclosed within <answer> </answer> tags, "
+                "respectively, i.e., <think> reasoning process here </think> <answer> answer here </answer>.\n"
+                f"User: {problem}\n"
+                "Assistant: <think>"
+            )
+            return question
+            
+        elif self.model_name.lower() in ["llama-base", "llama-rl"]:
+            question = (
+                f"Question: {problem}\n"
+                "Answer: Let's think step by step."
+            )
+            return question
+            
+        elif self.model_name.lower() == "llama-instruct":
+            question = (
+                "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n"
+                "You are a helpful mathematics assistant. Please solve the problem step by step and provide your final answer within \\boxed{}.<|eot_id|>\n"
+                "<|start_header_id|>user<|end_header_id|>\n"
+                f"{problem}<|eot_id|>\n"
+                "<|start_header_id|>assistant<|end_header_id|>\n"
+            )
+            return question
+            
+        else:
+            print(f"Unknown model {self.model_name}, using default prompt")
+            return f"Solve this math problem step by step:\n{problem}"
+
+
     def get_ground_truth(self, item):
         """Get ground truth answer from GSM8K item"""
         return item['final_answer']

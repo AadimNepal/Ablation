@@ -66,22 +66,22 @@ class Math500Loader:
         
         # Extract the final answer from the solution if needed
         # Math500 already has the answer field, but let's make sure it's clean
-        if answer:
-            final_answer = str(answer).strip()
-        else:
-            # Fallback: try to extract from solution using boxed format
-            import re
-            answer_match = re.search(r'\\boxed\{([^}]+)\}', solution)
-            if answer_match:
-                final_answer = answer_match.group(1)
-            else:
-                # Last resort: use the answer field as is
-                final_answer = str(answer) if answer else ""
+        # if answer:
+        #     final_answer = str(answer).strip()
+        # else:
+        #     # Fallback: try to extract from solution using boxed format
+        #     import re
+        #     answer_match = re.search(r'\\boxed\{([^}]+)\}', solution)
+        #     if answer_match:
+        #         final_answer = answer_match.group(1)
+        #     else:
+        #         # Last resort: use the answer field as is
+        #         final_answer = str(answer) if answer else ""
         
         return {
             "problem": problem,
             "solution": solution,
-            "final_answer": final_answer,
+            "final_answer": answer,
             "category": category,
             "level": level
         }

@@ -4,69 +4,35 @@ from torch import nn
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import os, gc, copy
 import random
-import shutil
-import tempfile
-from datetime import datetime
+from vllm.distributed.parallel_state import cleanup_dist_env_and_memory
 
 
 class BaseVllmModel:
-    """Base class for all vLLM models with process-safe experiment directories"""
+    """Base class for all vLLM models with common functionality"""
     
     def __init__(self, model_id, checkpoint_path, **llm_kwargs):
         self.model_id = model_id
-        self.base_checkpoint_path = checkpoint_path
-        self.experiment_checkpoint_dir = None
-        self.process_id = None
+        self.checkpoint_path = checkpoint_path
         
         print("Loading HuggingFace model...")
         self.hf_model = AutoModelForCausalLM.from_pretrained(model_id, trust_remote_code=True, device_map="cpu")
         self.tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
         
-        # Default LLM parameters
+        # Default LLM parameters with enforce_eager=True
         default_params = {
             "trust_remote_code": True,
             "dtype": "half",
             "max_seq_len_to_capture": 300,
-            "gpu_memory_utilization": 0.9
+            "gpu_memory_utilization": 0.9,
+            "enforce_eager": True  # ADDED: Disable compilation
         }
         default_params.update(llm_kwargs)
         
         self.llm = LLM(model=model_id, **default_params)
         print("HuggingFace model loaded.")
         
+        # Consistent sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
-
-    def setup_experiment(self, experiment_base_name):
-        """Setup process-safe experiment-specific checkpoint directory"""
-        # Create a truly unique process identifier
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S_%f')[:-3]  # Include microseconds
-        pid = os.getpid()  # Process ID
-        random_suffix = random.randint(1000, 9999)
-        
-        self.process_id = f"{timestamp}_{pid}_{random_suffix}"
-        self.experiment_checkpoint_dir = f"{self.base_checkpoint_path}_{experiment_base_name}_{self.process_id}"
-        
-        # Create the experiment directory
-        os.makedirs(self.experiment_checkpoint_dir, exist_ok=True)
-        print(f"Process-safe experiment checkpoint: {self.experiment_checkpoint_dir}")
-        
-        # Create a lockfile to prevent conflicts
-        self.lockfile_path = f"{self.experiment_checkpoint_dir}.lock"
-        with open(self.lockfile_path, 'w') as f:
-            f.write(f"PID: {pid}\nTimestamp: {timestamp}\nExperiment: {experiment_base_name}\n")
-
-    def cleanup_experiment(self):
-        """Clean up the experiment checkpoint directory and lockfile"""
-        if self.experiment_checkpoint_dir and os.path.exists(self.experiment_checkpoint_dir):
-            print(f"Cleaning up experiment directory: {self.experiment_checkpoint_dir}")
-            shutil.rmtree(self.experiment_checkpoint_dir)
-            
-        # Remove lockfile
-        if hasattr(self, 'lockfile_path') and os.path.exists(self.lockfile_path):
-            os.remove(self.lockfile_path)
-            
-        self.experiment_checkpoint_dir = None
-        self.process_id = None
 
     def generate(self, prompt, **kwargs):
         if isinstance(prompt, str):
@@ -89,35 +55,74 @@ class BaseVllmModel:
         return results
 
     def _cleanup_and_copy(self, layer_number):
-        """Clean up vLLM and create model copy"""
-        del self.llm
-        torch.cuda.empty_cache()
-        gc.collect()
+        """Enhanced cleanup and create model copy"""
+        import time
+        import subprocess
+        
+        print(f"Enhanced cleanup for layer {layer_number}...")
+        
+        # Kill any hanging vLLM processes
+        try:
+            subprocess.run(['pkill', '-f', 'vllm'], check=False, timeout=5)
+            time.sleep(2)
+        except:
+            pass
+
+        # Clean up vLLM distributed state
+        try:
+            cleanup_dist_env_and_memory()
+            print("✓ vLLM distributed cleanup done")
+        except Exception as e:
+            print(f"Warning: vLLM cleanup failed: {e}")
+
+        # Delete LLM instance
+        if hasattr(self, 'llm') and self.llm is not None:
+            try:
+                del self.llm
+                self.llm = None
+                print("✓ LLM object deleted")
+            except Exception as e:
+                print(f"Warning: LLM deletion failed: {e}")
+        
+        # Aggressive CUDA cleanup
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            try:
+                torch.cuda.ipc_collect()
+            except:
+                pass
+            print("✓ CUDA cache cleared")
+        
+        # Multiple garbage collection passes
+        for i in range(3):
+            collected = gc.collect()
+            time.sleep(0.5)
+            print(f"✓ GC run {i+1}: collected {collected} objects")
+        
+        # Check memory status
+        if torch.cuda.is_available():
+            allocated = torch.cuda.memory_allocated() / 1e9
+            cached = torch.cuda.memory_reserved() / 1e9
+            print(f"✓ GPU Memory: {allocated:.2f}GB allocated, {cached:.2f}GB cached")
         
         print(f"Creating deep copy for layer {layer_number} ablation...")
         return copy.deepcopy(self.hf_model)
 
     def _save_and_reload(self, model_copy, **llm_kwargs):
-        """Save ablated model using process-safe directory"""
-        if not self.experiment_checkpoint_dir:
-            raise ValueError("Must call setup_experiment() before ablating layers!")
+        """Save ablated model and reload in vLLM with consistent parameters"""
+        print("Saving ablated model...")
+        os.makedirs(self.checkpoint_path, exist_ok=True)
         
-        # Check if our experiment directory still exists (safety check)
-        if not os.path.exists(self.experiment_checkpoint_dir):
-            raise RuntimeError(f"Experiment directory disappeared: {self.experiment_checkpoint_dir}")
+        # Clean up existing files
+        if os.path.exists(self.checkpoint_path):
+            for file in os.listdir(self.checkpoint_path):
+                file_path = os.path.join(self.checkpoint_path, file)
+                if os.path.isfile(file_path):
+                    os.unlink(file_path)
         
-        checkpoint_path = self.experiment_checkpoint_dir
-        
-        print(f"Saving ablated model to {checkpoint_path}...")
-        
-        # Clean existing files in the directory
-        for file in os.listdir(checkpoint_path):
-            file_path = os.path.join(checkpoint_path, file)
-            if os.path.isfile(file_path):
-                os.unlink(file_path)
-        
-        model_copy.save_pretrained(checkpoint_path)
-        self.tokenizer.save_pretrained(checkpoint_path)
+        model_copy.save_pretrained(self.checkpoint_path)
+        self.tokenizer.save_pretrained(self.checkpoint_path)
         
         # Clean up
         del model_copy
@@ -125,16 +130,17 @@ class BaseVllmModel:
         gc.collect()
         
         print("Loading ablated model in VLLM...")
-        # Default LLM parameters for reloading
-        default_params = {
+        # CONSISTENT parameters for reloading with enforce_eager=True
+        reload_params = {
             "trust_remote_code": True,
             "dtype": "half",
             "max_seq_len_to_capture": 300,
-            "gpu_memory_utilization": 0.9
+            "gpu_memory_utilization": 0.9,
+            "enforce_eager": True  # CRITICAL: Always disable compilation
         }
-        default_params.update(llm_kwargs)
+        reload_params.update(llm_kwargs)
         
-        self.llm = LLM(model=checkpoint_path, **default_params)
+        self.llm = LLM(model=self.checkpoint_path, **reload_params)
 
     def zero_ablate(self, layer_number):
         """Zero ablate a single layer - to be implemented by subclasses"""
@@ -200,8 +206,11 @@ class Qwen7BChat(BaseVllmModel, QwenModelMixin):
     def __init__(self):
         super().__init__(
             model_id="Qwen/Qwen-7B-Chat",
-            checkpoint_path="./ablated_model_qwen7bchat"
+            checkpoint_path="./ablated_model_qwen7bchat",
+            enforce_eager=True  # Explicit disable compilation
         )
+        # Override sampling params with max_tokens=1000
+        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
     
     def _format_prompt(self, prompt):
         """Format prompt for chat model compatibility"""
@@ -214,7 +223,7 @@ class Qwen7BChat(BaseVllmModel, QwenModelMixin):
         layer = model_copy.transformer.h[layer_number]  # Qwen chat uses transformer.h
         self._ablate_layer(layer, layer_number)
         
-        self._save_and_reload(model_copy)
+        self._save_and_reload(model_copy, enforce_eager=True)
         return f"Layer {layer_number} ablated successfully"
 
 
@@ -226,8 +235,11 @@ class Qwen257BBase(BaseVllmModel, QwenModelMixin):
             dtype="half",
             max_model_len=32768,  
             max_seq_len_to_capture=1000,
-            gpu_memory_utilization=0.7
+            gpu_memory_utilization=0.7,
+            enforce_eager=True  # Explicit disable compilation
         )
+        # Override sampling params with max_tokens=1000
+        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
         model_copy = self._cleanup_and_copy(layer_number)
@@ -236,7 +248,11 @@ class Qwen257BBase(BaseVllmModel, QwenModelMixin):
         layer = model_copy.model.layers[layer_number]
         self._ablate_layer(layer, layer_number)
         
-        self._save_and_reload(model_copy, max_seq_len_to_capture=1000)
+        self._save_and_reload(
+            model_copy, 
+            max_seq_len_to_capture=1000,
+            enforce_eager=True
+        )
         return f"Layer {layer_number} ablated successfully"
 
 
@@ -245,10 +261,10 @@ class Qwen257BInstruct(BaseVllmModel, QwenModelMixin):
         super().__init__(
             model_id="Qwen/Qwen2.5-7B-Instruct",
             checkpoint_path="./ablated_model_qwen257binstruct",
-            max_model_len=2048  # Fixed prompt length issue
+            enforce_eager=True  # Explicit disable compilation
         )
-        # Override sampling params for instruct model
-        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=100)
+        # Override sampling params with max_tokens=1000
+        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
         model_copy = self._cleanup_and_copy(layer_number)
@@ -257,7 +273,7 @@ class Qwen257BInstruct(BaseVllmModel, QwenModelMixin):
         layer = model_copy.model.layers[layer_number]
         self._ablate_layer(layer, layer_number)
         
-        self._save_and_reload(model_copy)
+        self._save_and_reload(model_copy, enforce_eager=True)
         return f"Layer {layer_number} ablated successfully"
 
 
@@ -267,11 +283,12 @@ class DeepSeekR1DistillQwen7B(BaseVllmModel, QwenModelMixin):
             model_id="deepseek-ai/deepseek-R1-Distill-Qwen-7B",
             checkpoint_path="./ablated_model_deepseekqwen7b",
             dtype="float16",
-            max_model_len=2048,  # Fixed prompt length issue
-            gpu_memory_utilization=0.85
+            max_model_len=1000,
+            gpu_memory_utilization=0.85,
+            enforce_eager=True  # Explicit disable compilation
         )
-        # Override sampling params
-        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=10)
+        # Override sampling params with max_tokens=1000
+        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
         model_copy = self._cleanup_and_copy(layer_number)
@@ -283,8 +300,9 @@ class DeepSeekR1DistillQwen7B(BaseVllmModel, QwenModelMixin):
         self._save_and_reload(
             model_copy,
             dtype="float16",
-            max_model_len=2048,
-            gpu_memory_utilization=0.85
+            max_model_len=1000,
+            gpu_memory_utilization=0.85,
+            enforce_eager=True
         )
         return f"Layer {layer_number} ablated successfully"
 
@@ -295,9 +313,10 @@ class Llama318BBase(BaseVllmModel, LlamaModelMixin):
             model_id="meta-llama/Llama-3.1-8B",
             checkpoint_path="./ablated_model_llama318bbasedkkk",
             max_model_len=31768,
-            gpu_memory_utilization=0.9
+            gpu_memory_utilization=0.9,
+            enforce_eager=True  # Explicit disable compilation
         )
-        # Override sampling params
+        # Override sampling params with max_tokens=1000
         self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
@@ -310,7 +329,8 @@ class Llama318BBase(BaseVllmModel, LlamaModelMixin):
         self._save_and_reload(
             model_copy,
             max_model_len=31768,
-            gpu_memory_utilization=0.9
+            gpu_memory_utilization=0.9,
+            enforce_eager=True
         )
         return f"Layer {layer_number} ablated successfully"
 
@@ -320,10 +340,11 @@ class Llama318BInstruct(BaseVllmModel, LlamaModelMixin):
         super().__init__(
             model_id="meta-llama/Llama-3.1-8B-Instruct",
             checkpoint_path="./ablated_model_llama318binstruct",
-            max_model_len=31768
+            max_model_len=31768,
+            enforce_eager=True  # Explicit disable compilation
         )
-        # Override sampling params
-        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=256)
+        # Override sampling params with max_tokens=1000
+        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
         model_copy = self._cleanup_and_copy(layer_number)
@@ -332,7 +353,11 @@ class Llama318BInstruct(BaseVllmModel, LlamaModelMixin):
         layer = model_copy.model.layers[layer_number]
         self._ablate_layer(layer, layer_number)
         
-        self._save_and_reload(model_copy, max_model_len=31768)
+        self._save_and_reload(
+            model_copy, 
+            max_model_len=31768,
+            enforce_eager=True
+        )
         return f"Layer {layer_number} ablated successfully"
 
 
@@ -342,8 +367,11 @@ class DeepSeekR1DistilledLlama(BaseVllmModel, LlamaModelMixin):
             model_id="deepseek-ai/DeepSeek-R1-Distill-Llama-8B",
             checkpoint_path="./ablated_model_deepseek_r1_8b",
             max_model_len=32768,
-            gpu_memory_utilization=0.90
+            gpu_memory_utilization=0.90,
+            enforce_eager=True  # Explicit disable compilation
         )
+        # Override sampling params with max_tokens=1000
+        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
         model_copy = self._cleanup_and_copy(layer_number)
@@ -355,7 +383,8 @@ class DeepSeekR1DistilledLlama(BaseVllmModel, LlamaModelMixin):
         self._save_and_reload(
             model_copy,
             max_model_len=32768,
-            gpu_memory_utilization=0.90
+            gpu_memory_utilization=0.90,
+            enforce_eager=True
         )
         return f"Layer {layer_number} ablated successfully"
 
@@ -365,8 +394,11 @@ class OpenReasonerBase(BaseVllmModel, QwenModelMixin):
         super().__init__(
             model_id="Open-Reasoner-Zero/Open-Reasoner-Zero-7B",
             checkpoint_path="./ablated_model_open_reasoner_zero",
-            max_model_len=32768
+            max_model_len=32768,
+            enforce_eager=True  # Explicit disable compilation
         )
+        # Override sampling params with max_tokens=1000
+        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
         model_copy = self._cleanup_and_copy(layer_number)
@@ -375,7 +407,11 @@ class OpenReasonerBase(BaseVllmModel, QwenModelMixin):
         layer = model_copy.model.layers[layer_number]
         self._ablate_layer(layer, layer_number)
         
-        self._save_and_reload(model_copy, max_model_len=32768)
+        self._save_and_reload(
+            model_copy, 
+            max_model_len=32768,
+            enforce_eager=True
+        )
         return f"Layer {layer_number} ablated successfully"
 
 
@@ -385,10 +421,11 @@ class Llama31SimpleRLZoo(BaseVllmModel, LlamaModelMixin):
             model_id="hkust-nlp/Llama-3.1-8B-SimpleRL-Zoo",
             checkpoint_path="./ablated_model_llama318bsimplerl",
             max_model_len=31768,
-            gpu_memory_utilization=0.9
+            gpu_memory_utilization=0.9,
+            enforce_eager=True  # Explicit disable compilation
         )
-        # Override sampling params
-        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=256)
+        # Override sampling params with max_tokens=1000
+        self.sampling_params = SamplingParams(temperature=0.7, top_p=0.9, max_tokens=1000)
 
     def zero_ablate(self, layer_number):
         model_copy = self._cleanup_and_copy(layer_number)
@@ -400,6 +437,7 @@ class Llama31SimpleRLZoo(BaseVllmModel, LlamaModelMixin):
         self._save_and_reload(
             model_copy,
             max_model_len=31768,
-            gpu_memory_utilization=0.9
+            gpu_memory_utilization=0.9,
+            enforce_eager=True
         )
         return f"Layer {layer_number} ablated successfully"
